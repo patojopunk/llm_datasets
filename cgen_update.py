@@ -95,18 +95,12 @@ def build_palette_from_tensor(image_tensor: torch.Tensor, k: int) -> torch.Tenso
     Returns:
         palette: [K,3] float32 in [0,1] (on CPU; move to CUDA in caller)
     """
-    print ('got here 4')
     if image_tensor.dim() != 3 or image_tensor.shape[0] != 3:
         raise ValueError("image_tensor must be [3,H,W]")
-    print ('got here 5')
     img_np = image_tensor.permute(1, 2, 0).detach().cpu().numpy().reshape(-1, 3)
-    print ('got here 6:', k, img_np.shape)
     kmeans = KMeans(n_clusters=k, random_state=0).fit(img_np)
-    print ('got here 7')
     centers = torch.tensor(kmeans.cluster_centers_, dtype=torch.float32)  # [K,3]
-    print ('got here 8')
     centers.clamp_(0, 1)
-    print ('got here 9')
     return centers
 
 
@@ -161,7 +155,6 @@ class PatchTrainer(object):
         """
         Optimize a patch to generate an adversarial example.
         """
-        print ('got here 0')
 
         # --------------------------
         # Config + sane fallbacks
@@ -185,17 +178,14 @@ class PatchTrainer(object):
         # Patch initialization
         # ===========================================
         device = torch.device("cuda")
-        print ('got here 1')
 
         if use_capgen:
             # >>> Option A: Build palette (K-means) from a representative background
             if capgen_image_path is None:
                 raise ValueError("config.capgen_image_path must be set when use_capgen=True")
 
-            print ('got here 2')
             bg_image = transforms.ToTensor()(Image.open(capgen_image_path).convert('RGB'))
             palette = build_palette_from_tensor(bg_image, capgen_num_colors).to(device)  # [K,3] on CUDA
-            print ('got here 3')
 
             # Create differentiable CAPGen module
             self.capgen_mod = CapGenModule(
@@ -208,7 +198,14 @@ class PatchTrainer(object):
             with torch.no_grad():
                 init_patch, _ = self.capgen_mod()
             adv_patch_preview = init_patch.detach().cpu()
-            print ('got here 4')
+
+            try:
+                preview_path = os.path.join(self.folder_selection, "initial_patch.png")
+                transforms.ToPILImage('RGB')(adv_patch_preview[0]).save(preview_path)
+                mlflow.log_artifact(preview_path, artifact_path="initial")
+            except Exception as e:
+                print(f"[MLflow] initial patch logging skipped: {e}")
+
 
         else:
             # Fallback to original random init (pixel-space parameter)
@@ -395,7 +392,7 @@ class PatchTrainer(object):
                         r_eps = 1e-8
                         ent = -(r * (r + r_eps).log()).sum(-1).mean()  # mean pixel entropy
                         entropy_weight = float(getattr(self.config, "capgen_entropy_weight", 0.0))
-                        ent_loss = -entropy_weight * ent
+                        ent_loss = entropy_weight * ent
                     else:
                         ent_loss = torch.tensor(0.0, device=device)
 
@@ -462,8 +459,14 @@ class PatchTrainer(object):
                     cur_patch_cpu = cur_patch.detach().cpu()
                     for p_idx in range(cur_patch_cpu.size(0)):
                         im = transforms.ToPILImage('RGB')(cur_patch_cpu[p_idx])
-                        im.save(f'{self.folder_selection}/PATCH_ITERATIONS/'
-                                f'{time_str}_e{epoch:03d}_i{i_batch:05d}_p{p_idx}.jpg')
+                        out_path = (f'{self.folder_selection}/PATCH_ITERATIONS/'
+                                    f'{time_str}_e{epoch:03d}_i{i_batch:05d}_p{p_idx}.jpg')
+                        im.save(out_path)
+                        # NEW: log it to MLflow immediately
+                        try:
+                            mlflow.log_artifact(out_path, artifact_path=f"patch_iters/e{epoch:03d}")
+                        except Exception as e:
+                            print(f"[MLflow] artifact log skipped: {e}")
 
 
 
@@ -539,10 +542,28 @@ class PatchTrainer(object):
         return adv_patch_cpu
 
 # Keep your argv override
-sys.argv = ['train_patch_capgen.py', 'carpark', 'cg006']
+sys.argv = ['train_patch_capgen.py', 'carpark', 'cg007']
 
 def main():
 
+    # Tell MLflow to use your server
+    mlflow.set_tracking_uri("http://127.0.0.1:5000")
+    print("[MLflow] tracking URI:", mlflow.get_tracking_uri())
+
+    # Group runs by mode (e.g., 'carpark')
+    mlflow.set_experiment(f"advpatch_{sys.argv[1]}")
+
+    # Optional autolog (keeps your manual logging)
+    mlflow.pytorch.autolog(log_models=False)
+
+    with mlflow.start_run(run_name=sys.argv[2]) as run:
+        print("[MLflow] run_id:", run.info.run_id)
+        trainer = PatchTrainer(sys.argv[1], sys.argv[2])
+        mlflow.set_tag("script", "train_patch_capgen.py")
+        mlflow.set_tag("patch_num", getattr(trainer.config, "patch_num", "unknown"))
+        trainer.train()
+
+    
     # [MLflow] — light-touch run wrapper with names from your args
     try:
         mlflow.set_experiment(f"advpatch_{sys.argv[1]}")  # groups runs by mode
