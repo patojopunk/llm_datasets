@@ -1,0 +1,180 @@
+
+The simple mental model
+OpenTelemetry is the wiring inside your app
+Prometheus is where your app’s operational metrics live
+MLflow is where your LLM/agent traces, prompt lineage, evaluations, and comparisons live
+
+OpenTelemetry is the standard layer that instruments Python apps and emits traces, metrics, and logs. Prometheus supports OTLP ingestion for OpenTelemetry metrics. MLflow’s tracing stack is OpenTelemetry-compatible and its tracing SDK is built on top of OpenTelemetry.
+
+How that maps to your codebase
+
+For your FastMCP app, the request flow is:
+
+frontend or curl
+→ backend/main.py
+→ backend/agent/orchestrator.py
+→ LLM call(s)
+→ MCP tool call(s)
+→ response returned
+
+And the observability flow should be:
+
+your app code
+→ OpenTelemetry instrumentation in main.py, collector.py, and orchestrator.py
+→ Prometheus for numeric operational metrics
+→ MLflow for rich LLM/agent traces and later eval workflows
+
+That works well because OpenTelemetry is designed for manual instrumentation in Python apps, Prometheus is designed to store time-series operational metrics, and MLflow is designed to trace LLM/agent steps including inputs, outputs, metadata, latency, and costs.
+
+What each piece does in your project
+OpenTelemetry
+
+In your project, OpenTelemetry should stay inside:
+
+backend/main.py
+backend/metrics/collector.py
+backend/agent/orchestrator.py
+
+Its job is to create the trace/span tree and emit counters/histograms.
+
+So for one /chat request, OpenTelemetry gives you spans like:
+
+chat.request
+orchestrator.respond
+skill.select
+skill.load
+llm.call
+mcp.tool.call
+
+And it gives you metrics like:
+
+request count
+request latency
+LLM call count
+LLM latency
+token counts
+tool call count
+tool latency
+tool failures
+
+That matches OpenTelemetry’s role in Python: you initialize the SDK once, then instrument the interesting code paths to emit traces and metrics.
+
+Prometheus
+
+Prometheus should be the place you look for “is the app healthy?”
+
+For your project, Prometheus should answer questions like:
+
+How many chat requests are happening?
+What is p95 latency?
+How many LLM calls per request?
+Which MCP tool is slowest?
+How many tool failures happened today?
+Are token counts trending up?
+
+Prometheus is a monitoring and alerting system that stores metrics as time series, and it can ingest OpenTelemetry metrics through OTLP over HTTP.
+
+So in your architecture, Prometheus is not where you inspect full LLM conversations or prompt details. It is where you inspect aggregated metrics over time.
+
+MLflow
+
+MLflow should be the place you look for “how is the AI behavior doing?”
+
+For your project, MLflow should eventually hold:
+
+LLM/agent traces
+prompt version or prompt alias used
+model used
+tool sequence used
+bad/good trace examples
+benchmark results
+prompt comparisons
+model comparisons
+eval datasets built from production traces
+
+MLflow’s tracing is OpenTelemetry-compatible, and MLflow can ingest OpenTelemetry traces through an OTLP endpoint. MLflow also positions traces as useful for building high-quality evaluation datasets from real production traffic.
+
+So in your project, MLflow is the AI quality / experimentation / eval system, not the main operational dashboard.
+
+How the pieces relate in your project
+
+Right now, in phase 1, your architecture is basically:
+
+backend/main.py starts the request
+→ collector.py starts OTEL request telemetry
+→ orchestrator.py creates child spans for LLM/tool work
+→ metrics are emitted through OpenTelemetry
+→ JSONL still gets written locally
+
+As you grow it, it should become:
+
+OpenTelemetry in app
+→ Prometheus receives the metrics
+→ MLflow receives the traces
+
+That split works because Prometheus is best at time-series service metrics, while MLflow is best at LLM/agent trace understanding and evaluation workflows.
+
+What each system is for, in one sentence
+
+For your project:
+
+OpenTelemetry: “capture what happened during a request”
+Prometheus: “show me operational numbers over time”
+MLflow: “show me how the agent behaved and help me improve it”
+What you should look at in each system
+
+Use Prometheus/Grafana when you want:
+
+latency dashboards
+throughput
+failure rate
+tool usage rate
+alerts
+
+Use MLflow when you want:
+
+trace-by-trace debugging
+compare prompt versions
+compare models
+analyze bad answers
+build eval sets from real traces
+
+Use your local JSONL file when you want:
+
+simple local debugging
+backward compatibility with your current scripts
+quick ad hoc inspection without backend infrastructure
+The architecture I recommend for your project going forward
+
+Phase 1, which you already started:
+
+OpenTelemetry inside main.py, collector.py, orchestrator.py
+JSONL kept as-is
+
+Phase 2:
+
+send OTEL metrics to Prometheus
+add dashboards in Grafana
+
+Phase 3:
+
+send traces to MLflow
+connect benchmark scripts and quality.py to MLflow runs
+add prompt/model comparison workflows
+
+That staged approach fits your project well because your core runtime facts are already concentrated in just a few files, and MLflow can sit alongside OpenTelemetry rather than replacing it.
+
+The shortest architecture summary
+
+For your FastMCP project:
+
+OpenTelemetry gets added to the request path in your backend
+Prometheus becomes the home for the app’s numeric health metrics
+MLflow becomes the home for the LLM/agent traces, comparisons, and eval work
+
+So your app does the work once, through OpenTelemetry, and then:
+
+Prometheus tells you whether the system is healthy
+MLflow tells you whether the AI behavior is good
+
+If you want, I can draw this next as a project-specific flow diagram using your actual file names.
