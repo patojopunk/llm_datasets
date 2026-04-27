@@ -1,0 +1,107 @@
+skills_orch/client.py     backend/mcp/client.py
+
+skills_orch/server.py    gateways/core_gateway.py
+
+skills_orch/utils.py        backend/agent/engine.py
+
+
+
+opentelemetry
+
+backend/main.py
+backend/observability/otel.py
+
+
+
+observability
+
+backend/main.py
+backend/agent/engine.py
+backend/agent/sessions.py
+backend/metrics/collector.py
+backend/observability/tool_trace_content.py
+
+
+Direct OTEL / tracing
+
+backend/observability/otel.py
+backend/agent/engine.py
+backend/agent/sessions.py
+backend/mcp/client.py
+backend/main.py
+
+Structured observability / telemetry records
+
+backend/observability/tool_trace_context.py
+backend/observability/models.py
+backend/metrics/collector.py
+backend/main.py
+
+Observability-adjacent analytics
+
+backend/metrics/quality.py
+
+Observability configuration
+
+backend/config.py
+
+
+
+
+┌──────────────────────────────────────────────┐
+│ Client / UI                                 │
+└──────────────────────────────────────────────┘
+                    │
+                    ▼
+┌──────────────────────────────────────────────┐
+│ API Layer                                    │
+│ backend/main.py                              │
+│ - request entry                              │
+│ - builds telemetry event                     │
+│ - calls metrics collector                    │
+└──────────────────────────────────────────────┘
+                    │
+                    ▼
+┌──────────────────────────────────────────────┐
+│ Session Layer                                │
+│ backend/agent/sessions.py                    │
+│ - session.chat span                          │
+│ - lock timing                                │
+│ - trace_id capture                           │
+└──────────────────────────────────────────────┘
+                    │
+                    ▼
+┌──────────────────────────────────────────────┐
+│ Agent Orchestration Layer                    │
+│ backend/agent/engine.py                      │
+│ - engine.respond span                        │
+│ - engine.agent_invoke span                   │
+│ - parent tool summaries                      │
+│ - engine metrics                             │
+└──────────────────────────────────────────────┘
+                    │
+                    ▼
+┌──────────────────────────────────────────────┐
+│ Tool Runtime Layer                           │
+│ backend/mcp/client.py                        │
+│ - mcp.ensure_alias_loaded span               │
+│ - mcp.get_all_tools span                     │
+│ - tool.invoke child spans                    │
+│ - per-tool call record creation              │
+└──────────────────────────────────────────────┘
+                    │
+                    ▼
+┌──────────────────────────────────────────────┐
+│ Tool / Gateway Layer                         │
+│ MCP Gateway / MCP Servers                    │
+└──────────────────────────────────────────────┘
+
+
+Supporting observability components:
+- backend/observability/otel.py
+- backend/observability/tool_trace_context.py
+- backend/observability/models.py
+- backend/metrics/collector.py
+- backend/metrics/quality.py
+- backend/config.py
+- metrics/chat_metrics.jsonl
